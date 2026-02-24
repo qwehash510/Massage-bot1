@@ -1,20 +1,22 @@
 import os
 import asyncio
-from pyrogram import Client, filters, idle
-from pyrogram.types import Message
+from pyrogram import Client, filters
+from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
+from pyrogram.enums import ParseMode
+from pyrogram.idle import idle
+
 from pytgcalls import PyTgCalls
-from pytgcalls.types import AudioPiped
+from pytgcalls.types.input_stream import AudioPiped
+from pytgcalls.types.input_stream.quality import HighQualityAudio
+
 import yt_dlp
 
-# WESTEROS SETTINGS
-BOT_NAME = "🏰 WESTEROS MUSIC"
-
-API_ID = int(os.environ.get("API_ID"))
-API_HASH = os.environ.get("API_HASH")
-BOT_TOKEN = os.environ.get("BOT_TOKEN")
+API_ID = int(os.getenv("API_ID"))
+API_HASH = os.getenv("API_HASH")
+BOT_TOKEN = os.getenv("BOT_TOKEN")
 
 bot = Client(
-    "westeros_music_bot",
+    "WESTEROS_PREMIUM",
     api_id=API_ID,
     api_hash=API_HASH,
     bot_token=BOT_TOKEN
@@ -23,169 +25,161 @@ bot = Client(
 call = PyTgCalls(bot)
 
 queues = {}
-playing = {}
 
-# DOWNLOAD FUNCTION
-def download(query):
+# Butonlar
+def buttons():
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("⏸", callback_data="pause"),
+            InlineKeyboardButton("▶", callback_data="resume"),
+            InlineKeyboardButton("⏭", callback_data="skip"),
+            InlineKeyboardButton("⏹", callback_data="stop"),
+        ]
+    ])
+
+# YouTube arama
+def yt_search(query):
 
     ydl_opts = {
         "format": "bestaudio",
-        "outtmpl": "%(id)s.%(ext)s",
-        "quiet": True,
-        "noplaylist": True
+        "noplaylist": True,
+        "quiet": True
     }
 
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
 
-        info = ydl.extract_info(f"ytsearch:{query}", download=True)
+        info = ydl.extract_info(f"ytsearch:{query}", download=False)["entries"][0]
 
-        file = ydl.prepare_filename(info["entries"][0])
-        title = info["entries"][0]["title"]
+        url = info["url"]
+        title = info["title"]
+        thumb = info["thumbnail"]
+        duration = info["duration"]
 
-        return file, title
+        return url, title, thumb, duration
 
-
-# PLAY NEXT SONG
-async def play_next(chat_id):
-
-    if chat_id in queues and queues[chat_id]:
-
-        file, title = queues[chat_id].pop(0)
-
-        await call.change_stream(
-            chat_id,
-            AudioPiped(file)
-        )
-
-        playing[chat_id] = title
-
-
-# START COMMAND
-@bot.on_message(filters.command("start"))
-async def start(_, message: Message):
-
-    await message.reply(
-f"""{BOT_NAME}
-
-⚔️ Westeros krallığının resmi müzik botu
-
-Komutlar:
-/play şarkı
-/skip
-/pause
-/resume
-/stop
-/queue
-"""
-)
-
-
-# PLAY COMMAND
-@bot.on_message(filters.command("play"))
+# PLAY
+@bot.on_message(filters.command("play") & filters.group)
 async def play(_, message: Message):
 
     if len(message.command) < 2:
-        return await message.reply("Kullanım: /play şarkı adı")
+        return await message.reply("❌ /play şarkı adı")
 
-    chat_id = message.chat.id
     query = " ".join(message.command[1:])
 
-    msg = await message.reply("🏰 Westeros müzik aranıyor...")
+    msg = await message.reply("🔍 WESTEROS arıyor...")
 
-    file, title = download(query)
+    url, title, thumb, duration = yt_search(query)
+
+    chat_id = message.chat.id
 
     if chat_id not in queues:
         queues[chat_id] = []
 
-    if chat_id in playing:
+    queues[chat_id].append(url)
 
-        queues[chat_id].append((file, title))
+    if len(queues[chat_id]) == 1:
 
-        return await msg.edit(f"📜 Sıraya eklendi:\n{title}")
+        await call.join_group_call(
+            chat_id,
+            AudioPiped(url, HighQualityAudio())
+        )
 
-    await call.join_group_call(
-        chat_id,
-        AudioPiped(file)
+        caption = f"""
+👑 **WESTEROS MUSIC PREMIUM**
+
+🎵 **{title}**
+
+⏱ Süre: {duration} saniye
+👤 İsteyen: {message.from_user.mention}
+
+🔥 Premium sistem aktif
+"""
+
+        await msg.delete()
+
+        await bot.send_photo(
+            chat_id,
+            photo=thumb,
+            caption=caption,
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=buttons()
+        )
+
+    else:
+
+        await msg.edit(
+            f"📜 Sıraya eklendi\n🎵 {title}\n📊 Sıra: {len(queues[chat_id])}"
+        )
+
+# BUTON KONTROLLERİ
+@bot.on_callback_query()
+async def callbacks(_, query):
+
+    chat_id = query.message.chat.id
+
+    if query.data == "pause":
+
+        await call.pause_stream(chat_id)
+        await query.answer("Duraklatıldı")
+
+    elif query.data == "resume":
+
+        await call.resume_stream(chat_id)
+        await query.answer("Devam ediyor")
+
+    elif query.data == "skip":
+
+        if chat_id in queues and queues[chat_id]:
+
+            queues[chat_id].pop(0)
+
+            if queues[chat_id]:
+
+                await call.join_group_call(
+                    chat_id,
+                    AudioPiped(
+                        queues[chat_id][0],
+                        HighQualityAudio()
+                    )
+                )
+
+        await query.answer("Geçildi")
+
+    elif query.data == "stop":
+
+        queues[chat_id] = []
+        await call.leave_group_call(chat_id)
+
+        await query.answer("Durduruldu")
+
+# START
+@bot.on_message(filters.command("start"))
+async def start(_, message: Message):
+
+    await message.reply_photo(
+        photo="https://i.imgur.com/8B7QZ8G.jpeg",
+        caption="""
+👑 **WESTEROS MUSIC PREMIUM**
+
+Komutlar:
+
+/play şarkı adı
+
+🔥 Albüm kapaklı
+🔥 Premium kalite
+🔥 Stabil sistem
+""",
+        parse_mode=ParseMode.MARKDOWN
     )
 
-    playing[chat_id] = title
-
-    await msg.edit(f"▶️ Çalıyor:\n{title}")
-
-
-# SKIP
-@bot.on_message(filters.command("skip"))
-async def skip(_, message: Message):
-
-    chat_id = message.chat.id
-
-    if chat_id not in queues or not queues[chat_id]:
-        return await message.reply("Sırada müzik yok")
-
-    await play_next(chat_id)
-
-    await message.reply("⏭️ Atlandı")
-
-
-# PAUSE
-@bot.on_message(filters.command("pause"))
-async def pause(_, message: Message):
-
-    await call.pause_stream(message.chat.id)
-
-    await message.reply("⏸️ Duraklatıldı")
-
-
-# RESUME
-@bot.on_message(filters.command("resume"))
-async def resume(_, message: Message):
-
-    await call.resume_stream(message.chat.id)
-
-    await message.reply("▶️ Devam ediyor")
-
-
-# STOP
-@bot.on_message(filters.command("stop"))
-async def stop(_, message: Message):
-
-    chat_id = message.chat.id
-
-    queues[chat_id] = []
-    playing.pop(chat_id, None)
-
-    await call.leave_group_call(chat_id)
-
-    await message.reply("⏹️ Durduruldu")
-
-
-# QUEUE
-@bot.on_message(filters.command("queue"))
-async def queue(_, message: Message):
-
-    chat_id = message.chat.id
-
-    if chat_id not in queues or not queues[chat_id]:
-        return await message.reply("Sıra boş")
-
-    text = "📜 Sıra:\n\n"
-
-    for i, (_, title) in enumerate(queues[chat_id]):
-        text += f"{i+1}. {title}\n"
-
-    await message.reply(text)
-
-
-# MAIN
+# RUN
 async def main():
 
     await bot.start()
     await call.start()
 
-    print("🏰 WESTEROS MUSIC aktif")
+    print("👑 WESTEROS PREMIUM AKTİF")
 
     await idle()
 
-
-if __name__ == "__main__":
-    asyncio.run(main())
+asyncio.run(main())
