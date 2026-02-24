@@ -1,16 +1,13 @@
 import os
 import asyncio
-from pyrogram import Client, filters
+from pyrogram import Client, filters, idle
 from pyrogram.types import Message
-from pyrogram.idle import idle
 from pytgcalls import PyTgCalls
 from pytgcalls.types.input_stream import AudioPiped
 import yt_dlp
 
 # WESTEROS SETTINGS
-BOT_NAME = "WESTEROS MUSIC"
-BOT_ICON = "🏰"
-OWNER_TAG = "@Westeros"
+BOT_NAME = "🏰 WESTEROS MUSIC"
 
 API_ID = int(os.environ.get("API_ID"))
 API_HASH = os.environ.get("API_HASH")
@@ -28,7 +25,7 @@ call = PyTgCalls(bot)
 queues = {}
 playing = {}
 
-# DOWNLOAD
+# DOWNLOAD FUNCTION
 def download(query):
 
     ydl_opts = {
@@ -41,13 +38,14 @@ def download(query):
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
 
         info = ydl.extract_info(f"ytsearch:{query}", download=True)
+
         file = ydl.prepare_filename(info["entries"][0])
         title = info["entries"][0]["title"]
 
         return file, title
 
 
-# PLAY NEXT
+# PLAY NEXT SONG
 async def play_next(chat_id):
 
     if chat_id in queues and queues[chat_id]:
@@ -62,42 +60,37 @@ async def play_next(chat_id):
         playing[chat_id] = title
 
 
-# START
+# START COMMAND
 @bot.on_message(filters.command("start"))
 async def start(_, message: Message):
 
-    text = f"""
-{BOT_ICON} **{BOT_NAME}**
+    await message.reply(
+f"""{BOT_NAME}
 
-⚔️ Westeros'un resmi müzik botu
+⚔️ Westeros krallığının resmi müzik botu
 
 Komutlar:
-
-▶️ /play şarkı adı
-⏭️ /skip
-⏸️ /pause
-▶️ /resume
-⏹️ /stop
-📜 /queue
-
-🔥 Güç bizimle.
+/play şarkı
+/skip
+/pause
+/resume
+/stop
+/queue
 """
+)
 
-    await message.reply(text)
 
-
-# PLAY
+# PLAY COMMAND
 @bot.on_message(filters.command("play"))
 async def play(_, message: Message):
 
     if len(message.command) < 2:
-        return await message.reply("⚠️ Kullanım:\n/play şarkı adı")
+        return await message.reply("Kullanım: /play şarkı adı")
 
     chat_id = message.chat.id
-
     query = " ".join(message.command[1:])
 
-    msg = await message.reply(f"{BOT_ICON} Westeros müzik aranıyor...")
+    msg = await message.reply("🏰 Westeros müzik aranıyor...")
 
     file, title = download(query)
 
@@ -108,9 +101,7 @@ async def play(_, message: Message):
 
         queues[chat_id].append((file, title))
 
-        return await msg.edit(
-            f"📜 **Sıraya eklendi**\n\n🎵 {title}\n\n{BOT_ICON} {BOT_NAME}"
-        )
+        return await msg.edit(f"📜 Sıraya eklendi:\n{title}")
 
     await call.join_group_call(
         chat_id,
@@ -119,9 +110,7 @@ async def play(_, message: Message):
 
     playing[chat_id] = title
 
-    await msg.edit(
-        f"▶️ **Şimdi çalıyor**\n\n🎵 {title}\n\n{BOT_ICON} {BOT_NAME}"
-    )
+    await msg.edit(f"▶️ Çalıyor:\n{title}")
 
 
 # SKIP
@@ -131,11 +120,11 @@ async def skip(_, message: Message):
     chat_id = message.chat.id
 
     if chat_id not in queues or not queues[chat_id]:
-        return await message.reply("⚠️ Sırada müzik yok")
+        return await message.reply("Sırada müzik yok")
 
     await play_next(chat_id)
 
-    await message.reply(f"⏭️ Atlandı\n{BOT_ICON} {BOT_NAME}")
+    await message.reply("⏭️ Atlandı")
 
 
 # PAUSE
@@ -144,7 +133,7 @@ async def pause(_, message: Message):
 
     await call.pause_stream(message.chat.id)
 
-    await message.reply(f"⏸️ Duraklatıldı\n{BOT_ICON} {BOT_NAME}")
+    await message.reply("⏸️ Duraklatıldı")
 
 
 # RESUME
@@ -153,7 +142,7 @@ async def resume(_, message: Message):
 
     await call.resume_stream(message.chat.id)
 
-    await message.reply(f"▶️ Devam ediyor\n{BOT_ICON} {BOT_NAME}")
+    await message.reply("▶️ Devam ediyor")
 
 
 # STOP
@@ -167,7 +156,7 @@ async def stop(_, message: Message):
 
     await call.leave_group_call(chat_id)
 
-    await message.reply(f"⏹️ Westeros sustu\n{BOT_ICON} {BOT_NAME}")
+    await message.reply("⏹️ Durduruldu")
 
 
 # QUEUE
@@ -177,9 +166,9 @@ async def queue(_, message: Message):
     chat_id = message.chat.id
 
     if chat_id not in queues or not queues[chat_id]:
-        return await message.reply("📜 Sıra boş")
+        return await message.reply("Sıra boş")
 
-    text = f"{BOT_ICON} **Westeros Sırası:**\n\n"
+    text = "📜 Sıra:\n\n"
 
     for i, (_, title) in enumerate(queues[chat_id]):
         text += f"{i+1}. {title}\n"
@@ -193,9 +182,10 @@ async def main():
     await bot.start()
     await call.start()
 
-    print(f"{BOT_NAME} aktif")
+    print("🏰 WESTEROS MUSIC aktif")
 
     await idle()
 
 
-asyncio.run(main())
+if __name__ == "__main__":
+    asyncio.run(main())
