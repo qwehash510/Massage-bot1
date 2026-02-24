@@ -3,7 +3,7 @@ import asyncio
 from pyrogram import Client, filters, idle
 from pyrogram.types import Message
 from pytgcalls import PyTgCalls
-from pytgcalls.types.input_stream import AudioPiped
+from pytgcalls.types import AudioPiped
 import yt_dlp
 
 # WESTEROS SETTINGS
