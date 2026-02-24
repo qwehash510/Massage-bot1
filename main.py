@@ -1,30 +1,24 @@
 import os
 import asyncio
 from pyrogram import Client, filters
-from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
+from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from pyrogram.enums import ParseMode
+import yt_dlp
 
 from pytgcalls import PyTgCalls
-from pytgcalls.types.input_stream import InputAudioStream
+from pytgcalls.types import Update
+from pytgcalls.types.input_stream.stream import InputStream
 from pytgcalls.types.input_stream.quality import HighQualityAudio
-
-import yt_dlp
 
 API_ID = int(os.getenv("API_ID"))
 API_HASH = os.getenv("API_HASH")
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
-bot = Client(
-    "WESTEROS_ULTRA",
-    api_id=API_ID,
-    api_hash=API_HASH,
-    bot_token=BOT_TOKEN
-)
+bot = Client("westeros_premium", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
+pytgcall = PyTgCalls(bot)
 
-call = PyTgCalls(bot)
 queues = {}
 
-# Buttons
 def buttons():
     return InlineKeyboardMarkup([
         [
@@ -35,16 +29,15 @@ def buttons():
         ]
     ])
 
-# YouTube search
 def yt_search(query):
-    ydl_opts = {"format": "bestaudio", "noplaylist": True, "quiet": True}
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+    opts = {"format": "bestaudio", "noplaylist": True, "quiet": True}
+    with yt_dlp.YoutubeDL(opts) as ydl:
         info = ydl.extract_info(f"ytsearch:{query}", download=False)["entries"][0]
         return info["url"], info["title"], info["thumbnail"], info["duration"]
 
-# PLAY
+# ------------------------
 @bot.on_message(filters.command("play") & filters.group)
-async def play(_, message: Message):
+async def play(_, message):
     if len(message.command) < 2:
         return await message.reply_text("❌ /play şarkı adı yazın")
     query = " ".join(message.command[1:])
@@ -58,49 +51,49 @@ async def play(_, message: Message):
     queues[chat_id].append(url)
 
     if len(queues[chat_id]) == 1:
-        await call.join_group_call(chat_id, InputAudioStream(url, HighQualityAudio()))
+        # Yeni PyTgCalls v3 kullanımı
+        await pytgcall.join_group_call(chat_id, InputStream(url, HighQualityAudio()))
         caption = f"👑 **WESTEROS MUSIC ULTRA**\n\n🎵 {title}\n⏱ {duration}s\n👤 {message.from_user.mention}"
         await msg.delete()
         await bot.send_photo(chat_id, photo=thumb, caption=caption, parse_mode=ParseMode.MARKDOWN, reply_markup=buttons())
     else:
         await msg.edit_text(f"📜 Sıraya eklendi: {title}\n📊 Sıra: {len(queues[chat_id])}")
 
-# CALLBACKS
+# ------------------------
 @bot.on_callback_query()
-async def callbacks(_, query):
+async def cb(_, query):
     chat_id = query.message.chat.id
     if query.data == "pause":
-        await call.pause_stream(chat_id); await query.answer("⏸ Duraklatıldı")
+        await pytgcall.pause_stream(chat_id); await query.answer("⏸ Duraklatıldı")
     elif query.data == "resume":
-        await call.resume_stream(chat_id); await query.answer("▶ Devam ediyor")
+        await pytgcall.resume_stream(chat_id); await query.answer("▶ Devam ediyor")
     elif query.data == "skip":
         if chat_id in queues and queues[chat_id]:
             queues[chat_id].pop(0)
             if queues[chat_id]:
-                await call.join_group_call(chat_id, InputAudioStream(queues[chat_id][0], HighQualityAudio()))
+                await pytgcall.join_group_call(chat_id, InputStream(queues[chat_id][0], HighQualityAudio()))
         await query.answer("⏭ Geçildi")
     elif query.data == "stop":
         queues[chat_id] = []
-        await call.leave_group_call(chat_id)
+        await pytgcall.leave_group_call(chat_id)
         await query.answer("⏹ Durduruldu")
 
-# START
+# ------------------------
 @bot.on_message(filters.command("start"))
-async def start(_, message: Message):
+async def start(_, message):
     await message.reply_photo(
         photo="https://i.imgur.com/8B7QZ8G.jpeg",
-        caption="👑 **WESTEROS MUSIC ULTRA**\n\nPremium, albüm kapaklı, butonlu, queue destekli ve hatasız müzik botu.\n\nKomutlar:\n/play şarkı adı\nButonlarla kontrol",
+        caption="👑 **WESTEROS MUSIC ULTRA**\nPremium, albüm kapaklı, butonlu, queue destekli ve hatasız müzik botu.\n/play şarkı adı ile başlatın.",
         parse_mode=ParseMode.MARKDOWN
     )
 
-# RUN
+# ------------------------
 async def main():
     await bot.start()
-    await call.start()
+    await pytgcall.start()
     print("👑 WESTEROS ULTRA AKTİF")
-
-    # idle yerine event loop ile bekletiyoruz
-    stop_event = asyncio.Event()
-    await stop_event.wait()
+    # idle yerine event ile beklet
+    stop = asyncio.Event()
+    await stop.wait()
 
 asyncio.run(main())
