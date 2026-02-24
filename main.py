@@ -3,7 +3,6 @@ import asyncio
 from pyrogram import Client, filters
 from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
 from pyrogram.enums import ParseMode
-from pyrogram.idle import idle
 
 from pytgcalls import PyTgCalls
 from pytgcalls.types.input_stream import InputAudioStream
@@ -23,11 +22,9 @@ bot = Client(
 )
 
 call = PyTgCalls(bot)
-
-# --------------------------
-# Queue ve veri yapıları
 queues = {}
 
+# Buttons
 def buttons():
     return InlineKeyboardMarkup([
         [
@@ -38,16 +35,14 @@ def buttons():
         ]
     ])
 
-# --------------------------
-# YouTube arama fonksiyonu
+# YouTube search
 def yt_search(query):
     ydl_opts = {"format": "bestaudio", "noplaylist": True, "quiet": True}
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(f"ytsearch:{query}", download=False)["entries"][0]
         return info["url"], info["title"], info["thumbnail"], info["duration"]
 
-# --------------------------
-# /play komutu
+# PLAY
 @bot.on_message(filters.command("play") & filters.group)
 async def play(_, message: Message):
     if len(message.command) < 2:
@@ -70,8 +65,7 @@ async def play(_, message: Message):
     else:
         await msg.edit_text(f"📜 Sıraya eklendi: {title}\n📊 Sıra: {len(queues[chat_id])}")
 
-# --------------------------
-# Callback butonları
+# CALLBACKS
 @bot.on_callback_query()
 async def callbacks(_, query):
     chat_id = query.message.chat.id
@@ -90,8 +84,7 @@ async def callbacks(_, query):
         await call.leave_group_call(chat_id)
         await query.answer("⏹ Durduruldu")
 
-# --------------------------
-# /start komutu
+# START
 @bot.on_message(filters.command("start"))
 async def start(_, message: Message):
     await message.reply_photo(
@@ -100,12 +93,14 @@ async def start(_, message: Message):
         parse_mode=ParseMode.MARKDOWN
     )
 
-# --------------------------
-# Botu başlat
+# RUN
 async def main():
     await bot.start()
     await call.start()
     print("👑 WESTEROS ULTRA AKTİF")
-    await idle()
+
+    # idle yerine event loop ile bekletiyoruz
+    stop_event = asyncio.Event()
+    await stop_event.wait()
 
 asyncio.run(main())
