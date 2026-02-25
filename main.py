@@ -5,14 +5,15 @@ from dotenv import load_dotenv
 
 # LOAD ENV
 load_dotenv()
-API_ID = int(os.getenv("API_ID"))
-API_HASH = os.getenv("API_HASH")
-BOT_TOKEN = os.getenv("BOT_TOKEN")
+
+API_ID = int(os.environ.get("API_ID"))
+API_HASH = os.environ.get("API_HASH")
+BOT_TOKEN = os.environ.get("BOT_TOKEN")
 
 logging.basicConfig(level=logging.INFO)
 
-# FONT & STYLE
 YAHUDA = "『 ʏᴀʜᴜᴅᴀ 』"
+
 EMOJI = {
     "raid":"🚨",
     "lock":"🔒",
@@ -25,136 +26,205 @@ EMOJI = {
 
 # CLIENT
 app = Client(
-    "yahuda_ultra_god",
+    "yahuda_render_god",
     api_id=API_ID,
     api_hash=API_HASH,
     bot_token=BOT_TOKEN,
-    workers=200
+    workers=100
 )
 
 # DATABASE
-joins, captcha_db, messages, global_ban, whitelist, locked = {}, {}, {}, set(), set(), set()
+joins = {}
+captcha_db = {}
+messages = {}
+global_ban = set()
+locked = set()
 
 # SETTINGS
-JOIN_LIMIT, JOIN_TIME = 5, 10
-FLOOD_LIMIT, FLOOD_TIME = 7, 8
-CAPTCHA_TIMEOUT, LOCK_TIME = 60, 30
-SPAM = ["http","t.me/","discord.gg","@"]
+JOIN_LIMIT = 5
+JOIN_TIME = 10
+FLOOD_LIMIT = 7
+FLOOD_TIME = 8
+CAPTCHA_TIMEOUT = 60
+LOCK_TIME = 30
 
-# GENERATE CAPTCHA
+SPAM = ["http","t.me/","discord.gg"]
+
+# CAPTCHA
 def gen_code():
     return ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
 
-# LOCK / UNLOCK
+# LOCK
 async def lock_group(chat):
-    if chat in locked: return
+    if chat in locked:
+        return
     locked.add(chat)
+
     await app.set_chat_permissions(chat, ChatPermissions())
-    await app.send_message(chat, f"{YAHUDA}\n\n{EMOJI['raid']} Raid algılandı\n{EMOJI['lock']} Grup kilitlendi\n{EMOJI['shield']} GOD MODE aktif")
 
+    await app.send_message(
+        chat,
+        f"{YAHUDA}\n\n🚨 Raid algılandı\n🔒 Grup kilitlendi\n🛡️ GOD MODE aktif"
+    )
+
+# UNLOCK
 async def unlock_group(chat):
-    if chat not in locked: return
-    locked.remove(chat)
-    await app.set_chat_permissions(chat, ChatPermissions(
-        can_send_messages=True,
-        can_send_media_messages=True,
-        can_send_other_messages=True
-    ))
-    await app.send_message(chat, f"{YAHUDA}\n\n{EMOJI['unlock']} Grup tekrar açıldı\n{EMOJI['shield']} Sistem stabil")
+    if chat not in locked:
+        return
 
-# RAID + CAPTCHA + BOT PROTECT
+    locked.remove(chat)
+
+    await app.set_chat_permissions(
+        chat,
+        ChatPermissions(
+            can_send_messages=True,
+            can_send_media_messages=True,
+            can_send_other_messages=True
+        )
+    )
+
+    await app.send_message(
+        chat,
+        f"{YAHUDA}\n\n✅ Grup tekrar açıldı\n🛡️ Sistem stabil"
+    )
+
+# JOIN PROTECTION
 @app.on_message(filters.new_chat_members)
-async def raid(client, message):
+async def join_handler(client, message):
+
     chat = message.chat.id
     now = time.time()
-    if chat not in joins: joins[chat]=[]
-    joins[chat].append(now)
-    joins[chat] = [t for t in joins[chat] if now-t <= JOIN_TIME]
 
-    for user in message.new_chat_members:
-        if user.id in global_ban or user.is_bot:
-            await client.ban_chat_member(chat, user.id)
-            return
+    if chat not in joins:
+        joins[chat] = []
+
+    joins[chat].append(now)
+
+    joins[chat] = [t for t in joins[chat] if now - t <= JOIN_TIME]
 
     if len(joins[chat]) >= JOIN_LIMIT:
+
         await lock_group(chat)
+
         for user in message.new_chat_members:
             try:
                 await client.ban_chat_member(chat, user.id)
-                global_ban.add(user.id)
-            except: pass
+            except:
+                pass
+
         await asyncio.sleep(LOCK_TIME)
+
         await unlock_group(chat)
+
         return
 
     for user in message.new_chat_members:
+
         code = gen_code()
-        captcha_db[user.id]={"code":code,"chat":chat,"time":now}
-        await message.reply(f"{YAHUDA}\n\n👤 {user.mention}\n{EMOJI['captcha']} Doğrulama kodu: `{code}`\n⏱ 60 saniye")
+
+        captcha_db[user.id] = {
+            "code": code,
+            "chat": chat,
+            "time": now
+        }
+
+        await message.reply(
+            f"{YAHUDA}\n\n👤 {user.mention}\n⏱ Kod: `{code}`\n60 saniye"
+        )
 
 # CAPTCHA VERIFY
 @app.on_message(filters.text & filters.group)
-async def captcha_verify(client,message):
-    uid=message.from_user.id
-    if uid not in captcha_db: return
-    data = captcha_db[uid]
-    if time.time()-data["time"] > CAPTCHA_TIMEOUT:
-        await client.ban_chat_member(data["chat"],uid)
-        global_ban.add(uid)
-        del captcha_db[uid]
-        await message.reply(f"{YAHUDA}\n\n❌ Doğrulama başarısız\n🚫 Banlandı")
-        return
-    if message.text == data["code"]:
-        del captcha_db[uid]
-        await message.reply(f"{YAHUDA}\n\n✅ Doğrulama başarılı\n🛡️ Hoşgeldin")
+async def captcha_handler(client, message):
 
-# SPAM
+    user = message.from_user.id
+
+    if user not in captcha_db:
+        return
+
+    data = captcha_db[user]
+
+    if time.time() - data["time"] > CAPTCHA_TIMEOUT:
+
+        await client.ban_chat_member(data["chat"], user)
+
+        del captcha_db[user]
+
+        return
+
+    if message.text == data["code"]:
+
+        del captcha_db[user]
+
+        await message.reply(
+            f"{YAHUDA}\n\n✅ Doğrulama başarılı\n🛡️ Hoşgeldin"
+        )
+
+# SPAM PROTECT
 @app.on_message(filters.text & filters.group)
-async def spam(client,message):
-    uid=message.from_user.id
-    if uid in whitelist: return
-    text=message.text.lower()
+async def spam_handler(client, message):
+
+    text = message.text.lower()
+
     for word in SPAM:
+
         if word in text:
+
             await message.delete()
-            await client.ban_chat_member(message.chat.id,uid)
-            global_ban.add(uid)
-            await message.reply(f"{YAHUDA}\n\n{EMOJI['spam']} Spam tespit edildi\n⚔️ Kullanıcı banlandı")
+
+            await client.ban_chat_member(
+                message.chat.id,
+                message.from_user.id
+            )
+
+            await message.reply(
+                f"{YAHUDA}\n\n🚫 Spam engellendi"
+            )
+
             return
 
 # FLOOD
 @app.on_message(filters.text & filters.group)
-async def flood(client,message):
-    uid=message.from_user.id
-    now=time.time()
-    if uid not in messages: messages[uid]=[]
+async def flood_handler(client, message):
+
+    uid = message.from_user.id
+    now = time.time()
+
+    if uid not in messages:
+        messages[uid] = []
+
     messages[uid].append(now)
-    messages[uid] = [t for t in messages[uid] if now-t <= FLOOD_TIME]
+
+    messages[uid] = [t for t in messages[uid] if now - t <= FLOOD_TIME]
+
     if len(messages[uid]) >= FLOOD_LIMIT:
-        await client.ban_chat_member(message.chat.id,uid)
-        global_ban.add(uid)
-        await message.reply(f"{YAHUDA}\n\n{EMOJI['flood']} Flood saldırısı engellendi")
 
-# COMMANDS
+        await client.ban_chat_member(
+            message.chat.id,
+            uid
+        )
+
+        await message.reply(
+            f"{YAHUDA}\n\n⚡ Flood engellendi"
+        )
+
+# COMMAND
 @app.on_message(filters.command("yahuda"))
-async def status(client,message):
-    await message.reply(f"{YAHUDA}\n\n🛡️ GOD MODE ULTRA v7 aktif\n⭐ Tüm sistemler maksimum\n🚀 Koruma seviyesi: 5/5")
+async def status(client, message):
 
-@app.on_message(filters.command("kilit"))
-async def cmd_lock(client,message):
-    await lock_group(message.chat.id)
+    await message.reply(
+        f"{YAHUDA}\n\n🛡️ GOD MODE aktif\n⭐ Koruma: 5/5"
+    )
 
-@app.on_message(filters.command("ac"))
-async def cmd_unlock(client,message):
-    await unlock_group(message.chat.id)
+# MAIN FIX (PYTHON 3.14 SAFE)
+async def main():
 
-# ASYNCIO FIX FOR RENDER
-try:
-    loop = asyncio.get_running_loop()
-except RuntimeError:
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
+    print("『 ʏᴀʜᴜᴅᴀ 』 GOD MODE RENDER ACTIVE")
 
-loop.run_until_complete(app.start())
-print("『 ʏᴀʜᴜᴅᴀ 』 ULTRA GOD MODE v7 ACTIVE")
-loop.run_forever()
+    await app.start()
+
+    await asyncio.Event().wait()
+
+
+if __name__ == "__main__":
+
+    asyncio.run(main())
