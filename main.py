@@ -3,15 +3,15 @@ from pyrogram import Client, filters
 from pyrogram.types import ChatPermissions
 from dotenv import load_dotenv
 
+# LOAD ENV
 load_dotenv()
-
 API_ID = int(os.getenv("API_ID"))
 API_HASH = os.getenv("API_HASH")
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
 logging.basicConfig(level=logging.INFO)
 
-# FONT & STYLING
+# FONT & STYLE
 YAHUDA = "『 ʏᴀʜᴜᴅᴀ 』"
 EMOJI = {
     "raid":"🚨",
@@ -33,28 +33,19 @@ app = Client(
 )
 
 # DATABASE
-joins = {}
-captcha_db = {}
-messages = {}
-global_ban = set()
-whitelist = set()
-locked = set()
+joins, captcha_db, messages, global_ban, whitelist, locked = {}, {}, {}, set(), set(), set()
 
 # SETTINGS
-JOIN_LIMIT = 5
-JOIN_TIME = 10
-FLOOD_LIMIT = 7
-FLOOD_TIME = 8
-CAPTCHA_TIMEOUT = 60
-LOCK_TIME = 30
-
+JOIN_LIMIT, JOIN_TIME = 5, 10
+FLOOD_LIMIT, FLOOD_TIME = 7, 8
+CAPTCHA_TIMEOUT, LOCK_TIME = 60, 30
 SPAM = ["http","t.me/","discord.gg","@"]
 
 # GENERATE CAPTCHA
 def gen_code():
     return ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
 
-# LOCK & UNLOCK
+# LOCK / UNLOCK
 async def lock_group(chat):
     if chat in locked: return
     locked.add(chat)
@@ -71,12 +62,11 @@ async def unlock_group(chat):
     ))
     await app.send_message(chat, f"{YAHUDA}\n\n{EMOJI['unlock']} Grup tekrar açıldı\n{EMOJI['shield']} Sistem stabil")
 
-# RAID DETECT + CAPTCHA + BOT PROTECT
+# RAID + CAPTCHA + BOT PROTECT
 @app.on_message(filters.new_chat_members)
 async def raid(client, message):
     chat = message.chat.id
     now = time.time()
-
     if chat not in joins: joins[chat]=[]
     joins[chat].append(now)
     joins[chat] = [t for t in joins[chat] if now-t <= JOIN_TIME]
@@ -108,14 +98,12 @@ async def captcha_verify(client,message):
     uid=message.from_user.id
     if uid not in captcha_db: return
     data = captcha_db[uid]
-
     if time.time()-data["time"] > CAPTCHA_TIMEOUT:
         await client.ban_chat_member(data["chat"],uid)
         global_ban.add(uid)
         del captcha_db[uid]
         await message.reply(f"{YAHUDA}\n\n❌ Doğrulama başarısız\n🚫 Banlandı")
         return
-
     if message.text == data["code"]:
         del captcha_db[uid]
         await message.reply(f"{YAHUDA}\n\n✅ Doğrulama başarılı\n🛡️ Hoşgeldin")
@@ -160,5 +148,13 @@ async def cmd_lock(client,message):
 async def cmd_unlock(client,message):
     await unlock_group(message.chat.id)
 
+# ASYNCIO FIX FOR RENDER
+try:
+    loop = asyncio.get_running_loop()
+except RuntimeError:
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+
+loop.run_until_complete(app.start())
 print("『 ʏᴀʜᴜᴅᴀ 』 ULTRA GOD MODE v7 ACTIVE")
-app.run()
+loop.run_forever()
