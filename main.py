@@ -1,294 +1,128 @@
-import os
-import time
+import logging
 import asyncio
-import random
-import string
-import threading
-from http.server import BaseHTTPRequestHandler, HTTPServer
+import time
+import re
+import requests
+from telethon import TelegramClient, events
+from telethon.errors import PhoneCodeInvalidError, FloodWaitError
 
-from pyrogram import Client, filters
-from pyrogram.types import ChatPermissions
+# --- AYARLAR ---
+API_ID = 33188452
+API_HASH = 'ac4afbd122081956a173b16590c02609'
+BOT_TOKEN = '8700345149:AAEGWow2t1ig6kB_Z9FstDXYO7FJ_rG4g1M'
 
-# ENV
-API_ID = int(os.environ["API_ID"])
-API_HASH = os.environ["API_HASH"]
-BOT_TOKEN = os.environ["BOT_TOKEN"]
-PORT = int(os.environ.get("PORT", 10000))
+BOT_NAME = "VATİKAN ÜCRETSİZ SMS"
+OWNERS = {8620961678}
 
-# STYLE
-YAHUDA = "『 ʏᴀʜᴜᴅᴀ 』"
+client = TelegramClient('free_sms_v2', API_ID, API_HASH)
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-# CLIENT
-app = Client(
-    "yahuda_godmode",
-    api_id=API_ID,
-    api_hash=API_HASH,
-    bot_token=BOT_TOKEN,
-    workers=100
-)
+active_numbers = {}  # {user_id: {"phone": str, "inbox_url": str}}
 
-# DATABASE
-joins = {}
-messages = {}
-captcha_db = {}
-global_ban = set()
-whitelist = set()
-locked = set()
-
-# SETTINGS
-JOIN_LIMIT = 5
-JOIN_TIME = 10
-
-FLOOD_LIMIT = 7
-FLOOD_TIME = 8
-
-CAPTCHA_TIMEOUT = 60
-LOCK_TIME = 30
-
-SPAM_WORDS = [
-    "http",
-    "t.me/",
-    "discord.gg",
-    "https://",
-    ".com"
-]
-
-# WEB SERVER (RENDER FIX)
-class Handler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.end_headers()
-        self.wfile.write(b"YAHUDA GOD MODE ACTIVE")
-
-def run_web():
-    server = HTTPServer(("0.0.0.0", PORT), Handler)
-    server.serve_forever()
-
-# CAPTCHA
-def generate_code():
-    return ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
-
-# LOCK
-async def lock_group(chat_id):
-
-    if chat_id in locked:
-        return
-
-    locked.add(chat_id)
-
-    await app.set_chat_permissions(chat_id, ChatPermissions())
-
-    await app.send_message(
-        chat_id,
-        f"{YAHUDA}\n\n🚨 RAID ALGILANDI\n🔒 GRUP KİLİTLENDİ\n🛡️ GOD MODE AKTİF"
-    )
-
-# UNLOCK
-async def unlock_group(chat_id):
-
-    if chat_id not in locked:
-        return
-
-    locked.remove(chat_id)
-
-    await app.set_chat_permissions(
-        chat_id,
-        ChatPermissions(
-            can_send_messages=True,
-            can_send_media_messages=True,
-            can_send_other_messages=True
-        )
-    )
-
-    await app.send_message(
-        chat_id,
-        f"{YAHUDA}\n\n✅ GRUP AÇILDI\n🛡️ KORUMA DEVAM EDİYOR"
-    )
-
-# RAID PROTECT
-@app.on_message(filters.new_chat_members)
-async def raid_protect(client, message):
-
-    chat_id = message.chat.id
-    now = time.time()
-
-    if chat_id not in joins:
-        joins[chat_id] = []
-
-    joins[chat_id].append(now)
-
-    joins[chat_id] = [
-        t for t in joins[chat_id]
-        if now - t <= JOIN_TIME
+def get_best_free_number():
+    """En kuralsız ücretsiz numara çekme - receive-smss + fallback"""
+    sites = [
+        "https://receive-smss.com/",
+        "https://quackr.io/",
+        "https://tempsmss.com/"
     ]
+    for site in sites:
+        try:
+            r = requests.get(site, timeout=12, headers={"User-Agent": "Mozilla/5.0"})
+            # Telefon numaralarını yakala (+country code format)
+            phones = re.findall(r'(\+\d{8,15})', r.text)
+            for phone in phones:
+                if len(phone) > 10:  # Geçerli numara
+                    inbox_url = f"https://receive-smss.com/sms/{phone.replace('+', '')}" if "receive-smss" in site else f"https://quackr.io/{phone.replace('+', '')}"
+                    return phone, inbox_url
+        except:
+            continue
+    return None, None
 
-    if len(joins[chat_id]) >= JOIN_LIMIT:
-
-        await lock_group(chat_id)
-
-        for user in message.new_chat_members:
-
-            try:
-                await client.ban_chat_member(chat_id, user.id)
-                global_ban.add(user.id)
-            except:
-                pass
-
-        await asyncio.sleep(LOCK_TIME)
-
-        await unlock_group(chat_id)
-
+@client.on(events.NewMessage(pattern='/sms', chats=None))
+async def get_free_number(event):
+    if event.sender_id not in OWNERS or not event.is_private:
         return
 
-    # captcha
-    for user in message.new_chat_members:
+    await event.respond("📱 **En iyi ücretsiz Telegram numarası aranıyor...**")
 
-        if user.is_bot:
-            await client.ban_chat_member(chat_id, user.id)
-            return
-
-        code = generate_code()
-
-        captcha_db[user.id] = {
-            "code": code,
-            "chat": chat_id,
-            "time": now
-        }
-
-        await message.reply(
-            f"{YAHUDA}\n\n👤 {user.mention}\n🔐 KOD: `{code}`\n⏱ 60 saniye içinde yaz"
-        )
-
-# CAPTCHA VERIFY
-@app.on_message(filters.text & filters.group)
-async def captcha_verify(client, message):
-
-    user_id = message.from_user.id
-
-    if user_id not in captcha_db:
+    phone, inbox_url = get_best_free_number()
+    if not phone:
+        await event.respond("❌ Şu anda uygun ücretsiz numara bulunamadı.\nBirkaç dakika sonra tekrar dene (/sms).")
         return
 
-    data = captcha_db[user_id]
+    # Telegram kontrolü (numarada aktif hesap var mı?)
+    has_account = "Bilinmiyor"
+    try:
+        test = TelegramClient(f'test_{int(time.time())}', API_ID, API_HASH)
+        await test.connect()
+        await test.send_code_request(phone)
+        has_account = "✅ Yeni hesap açılabilir"
+    except Exception as e:
+        if "already" in str(e).lower():
+            has_account = "⚠️ Bu numarada hesap olabilir"
+        else:
+            has_account = "⚠️ Test edilemedi"
+    finally:
+        try:
+            await test.disconnect()
+        except:
+            pass
 
-    if time.time() - data["time"] > CAPTCHA_TIMEOUT:
+    active_numbers[event.sender_id] = {"phone": phone, "inbox_url": inbox_url}
 
-        await client.ban_chat_member(
-            data["chat"],
-            user_id
-        )
-
-        del captcha_db[user_id]
-
-        return
-
-    if message.text == data["code"]:
-
-        del captcha_db[user_id]
-
-        await message.reply(
-            f"{YAHUDA}\n\n✅ DOĞRULAMA BAŞARILI\n🛡️ HOŞGELDİN"
-        )
-
-# SPAM
-@app.on_message(filters.text & filters.group)
-async def spam_protect(client, message):
-
-    user_id = message.from_user.id
-
-    if user_id in whitelist:
-        return
-
-    text = message.text.lower()
-
-    for word in SPAM_WORDS:
-
-        if word in text:
-
-            await message.delete()
-
-            await client.ban_chat_member(
-                message.chat.id,
-                user_id
-            )
-
-            await message.reply(
-                f"{YAHUDA}\n\n🚫 SPAM ENGELLENDİ"
-            )
-
-            return
-
-# FLOOD
-@app.on_message(filters.text & filters.group)
-async def flood_protect(client, message):
-
-    user_id = message.from_user.id
-
-    now = time.time()
-
-    if user_id not in messages:
-        messages[user_id] = []
-
-    messages[user_id].append(now)
-
-    messages[user_id] = [
-        t for t in messages[user_id]
-        if now - t <= FLOOD_TIME
-    ]
-
-    if len(messages[user_id]) >= FLOOD_LIMIT:
-
-        await client.ban_chat_member(
-            message.chat.id,
-            user_id
-        )
-
-        await message.reply(
-            f"{YAHUDA}\n\n⚡ FLOOD ENGELLENDİ"
-        )
-
-# COMMANDS
-
-@app.on_message(filters.command("yahuda"))
-async def cmd_status(client, message):
-
-    await message.reply(
-        f"{YAHUDA}\n\n🛡️ GOD MODE AKTİF\n⭐ KORUMA: 5/5\n⚡ DURUM: STABİL"
+    await event.respond(
+        f"✅ **Numara Hazır**\n"
+        f"Numara: `{phone}`\n"
+        f"Durum: {has_account}\n\n"
+        f"Kod geldiğinde `/kod {phone}` yaz.\n"
+        f"Bot otomatik inbox tarayacak ve kodu getirecek."
     )
 
-@app.on_message(filters.command("kilit"))
-async def cmd_lock(client, message):
+@client.on(events.NewMessage(pattern='/kod', chats=None))
+async def fetch_code(event):
+    if event.sender_id not in OWNERS or not event.is_private:
+        return
 
-    await lock_group(message.chat.id)
+    try:
+        phone = event.message.text.split(maxsplit=1)[1].strip()
+    except:
+        await event.respond("❗️ Kullanım: `/kod +905551234567`")
+        return
 
-@app.on_message(filters.command("ac"))
-async def cmd_unlock(client, message):
+    if event.sender_id not in active_numbers or active_numbers[event.sender_id]["phone"] != phone:
+        await event.respond("❌ Bu numara için aktif işlem bulunamadı.")
+        return
 
-    await unlock_group(message.chat.id)
+    inbox_url = active_numbers[event.sender_id]["inbox_url"]
+    await event.respond("🔍 **Kod bekleniyor...** (her 5 saniyede taranıyor)")
 
-@app.on_message(filters.command("whitelist"))
-async def cmd_whitelist(client, message):
+    for attempt in range(36):  # ~3 dakika
+        try:
+            r = requests.get(inbox_url, timeout=10)
+            # Telegram kodlarını yakala (genelde 5-7 haneli)
+            code_match = re.search(r'(\d{5,7})', r.text)
+            if code_match:
+                code = code_match.group(1)
+                await event.respond(
+                    f"✅ **Kod Başarıyla Yakalandı!**\n"
+                    f"Numara: `{phone}`\n"
+                    f"**Kod:** `{code}`\n\n"
+                    f"Telegram'a yapıştır ve yeni hesap aç."
+                )
+                if event.sender_id in active_numbers:
+                    del active_numbers[event.sender_id]
+                return
+        except:
+            pass
 
-    if message.reply_to_message:
+        await asyncio.sleep(5)
 
-        uid = message.reply_to_message.from_user.id
+    await event.respond("⏳ Kod yakalanamadı. Numara süresi dolmuş olabilir.\nTekrar `/sms` yaz.")
 
-        whitelist.add(uid)
+async def main():
+    await client.start(bot_token=BOT_TOKEN)
+    print(f"🚀 {BOT_NAME} çalışıyor... En kuralsız ücretsiz SMS + otomatik kod yakalama modu aktif")
+    await client.run_until_disconnected()
 
-        await message.reply(
-            f"{YAHUDA}\n\n✅ WHITELIST EKLENDİ"
-        )
-
-# START
-async def run_bot():
-
-    print("YAHUDA GOD MODE BASLADI")
-
-    await app.start()
-
-    await asyncio.Future()
-
-if __name__ == "__main__":
-
-    threading.Thread(target=run_web).start()
-
-    asyncio.run(run_bot())
+asyncio.run(main())
